@@ -95,6 +95,80 @@ static void SetPromiseRejectCallback(
   env->set_promise_reject_callback(args[0].As<Function>());
 }
 
+static void Sync(const FunctionCallbackInfo<Value>& args) {
+  CHECK(args[0]->IsPromise());
+  v8::Local<v8::Promise> promise = args[0].As<v8::Promise>();
+  if (promise->State() == v8::Promise::kFulfilled) {
+    args.GetReturnValue().Set(promise->Result());
+    return;
+  }
+
+  Isolate* isolate = args.GetIsolate();
+  Environment* env = Environment::GetCurrent(args);
+
+  uv_loop_t* loop = env->event_loop();
+  int state = promise->State();
+  while (state == v8::Promise::kPending) {
+    isolate->RunMicrotasks();
+    if (uv_loop_alive(loop)) {
+      uv_run(loop, UV_RUN_ONCE);
+    }
+    state = promise->State();
+  }
+
+  args.GetReturnValue().Set(promise->Result());
+}
+
+static void ExecuteWithinNewLoop(const FunctionCallbackInfo<Value>& args) {
+  CHECK(args[0]->IsFunction());
+
+  v8::Local<v8::Function> func = args[0].As<v8::Function>();
+  Isolate* isolate = args.GetIsolate();
+  Environment* env = Environment::GetCurrent(args);
+
+  v8::Local<v8::Function> function =
+      env->NewFunctionTemplate(Sync, v8::Local<v8::Signature>(),
+                          v8::ConstructorBehavior::kAllow,
+                          v8::SideEffectType::kHasSideEffect)
+          ->GetFunction(isolate->GetCurrentContext())
+          .ToLocalChecked();
+
+  v8::Local<v8::Value> argv[] = {function};
+
+  // Make a new event loop and swap out the isolate's event loop for it
+  uv_loop_t* loop = env->event_loop();
+  uv_stop(loop);
+  uv_loop_t newLoop;
+  uv_loop_init(&newLoop);
+  env->isolate_data()->set_event_loop(&newLoop);
+
+  // Call callback with `sync` parameter for synchronizing promises
+  // made within the new loop (WARNING: If `sync` callback is called
+  // on a promise made before entering into the synchronization context,
+  // it will likely hang, as the underlying events driving that promise
+  // are paused - only new events made within the callback should be safe
+  // to `sync`)
+  v8::MaybeLocal<v8::Value> result = func->Call(
+    env->context(),
+    v8::Undefined(isolate),
+    arraysize(argv),
+    argv);
+
+  // Run new loop to completion even after result from callback
+  while (uv_loop_alive(&newLoop)) {
+      isolate->RunMicrotasks();
+      uv_run(&newLoop, UV_RUN_ONCE);
+  }
+
+  // Close new loop and set isolate handle back to old one
+  uv_loop_close(&newLoop);
+  env->isolate_data()->set_event_loop(loop);
+
+  if (!result.IsEmpty()) {
+    args.GetReturnValue().Set(result.ToLocalChecked());
+  }
+}
+
 static void Initialize(Local<Object> target,
                        Local<Value> unused,
                        Local<Context> context,
@@ -120,6 +194,8 @@ static void Initialize(Local<Object> target,
   env->SetMethod(target,
                  "setPromiseRejectCallback",
                  SetPromiseRejectCallback);
+
+  env->SetMethod(target, "executeWithinNewLoop", ExecuteWithinNewLoop);
 }
 
 }  // namespace task_queue

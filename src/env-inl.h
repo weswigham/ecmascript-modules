@@ -49,6 +49,10 @@ inline uv_loop_t* IsolateData::event_loop() const {
   return event_loop_;
 }
 
+inline void IsolateData::set_event_loop(uv_loop_t* loop) {
+  event_loop_ = loop;
+}
+
 inline bool IsolateData::uses_node_allocator() const {
   return uses_node_allocator_;
 }

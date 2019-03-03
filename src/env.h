@@ -410,6 +410,7 @@ class IsolateData {
               ArrayBufferAllocator* node_allocator = nullptr);
   ~IsolateData();
   inline uv_loop_t* event_loop() const;
+  inline void set_event_loop(uv_loop_t* loop);
   inline MultiIsolatePlatform* platform() const;
   inline std::shared_ptr<PerIsolateOptions> options();
   inline void set_options(std::shared_ptr<PerIsolateOptions> options);
@@ -449,7 +450,7 @@ class IsolateData {
 #undef VP
 
   v8::Isolate* const isolate_;
-  uv_loop_t* const event_loop_;
+  uv_loop_t* event_loop_;
   v8::ArrayBuffer::Allocator* const allocator_;
   ArrayBufferAllocator* const node_allocator_;
   const bool uses_node_allocator_;
@@ -717,6 +718,7 @@ class Environment {
 
   inline v8::Isolate* isolate() const;
   inline uv_loop_t* event_loop() const;
+  inline void set_event_loop(uv_loop_t* loop);
   inline void TryLoadAddon(
       const char* filename,
       int flags,
